@@ -1,0 +1,185 @@
+###########################################################################################################################################
+#  Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved                                                                  #
+#                                                                                                                                          #
+#  Licensed under the MIT No Attribution License (MIT-0) (the ‘License’). You may not use this file except in compliance                   #
+#  with the License. A copy of the License is located at                                                                                   #
+#                                                                                                                                          #
+#      https://opensource.org/licenses/MIT-0                                                                                               #
+#                                                                                                                                          #
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files        #
+#  (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,     #
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so.  #
+#  THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF      #
+#  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR #
+#  ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH  # 
+#  THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                                                                              #
+############################################################################################################################################
+
+# Location-based Notifications Using Amazon Pinpoint solution
+#
+# template for location-based-notifications-using-amazon-pinpoint
+# **DO NOT DELETE**
+#
+# author: 
+#   - Ciro Santos (cirosant@)
+#   - Paulo Aragão (paragao@)
+#   - aws-solutions-builder@
+
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: "(SO0099b) - The AWS Cloudformation template for deploymnet of the Location-based Notifications Using Amazon Pinpoint solution"
+
+Parameters: 
+  SolutionsBucket:  
+    Description: original solutions bucket 
+    Type: String
+  SolutionsPrefix:
+    Description: original solutions prefix 
+    Type: String
+  GeofenceApiUrl:
+    Description: Geofence API GraphQL URL created in the main stack
+    Type: String
+
+Resources:      
+  LambdaEdgeCustomResourceLambdaRole:
+    Type: 'AWS::IAM::Role'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: 
+                - 'lambda.amazonaws.com'
+                - 'edgelambda.amazonaws.com'
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: LambdaBasicExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*
+        - PolicyName: LambdaAtEdgeExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'lambda:GetFunction'
+                  - 'lambda:CreateFunction'
+                  - 'lambda:DeleteFunction'
+                  - 'lambda:DisableReplication'
+                  - 'lambda:EnableReplication*'
+                  - 'lambda:GetLayerVersion'
+                  - 'lambda:PublishVersion'
+                  - 'cloudfront:UpdateDistribution'
+                  - 'cloudfront:CreateDistribution'
+                  - 'cloudfront:ListDistributionsByLambdaFunction'
+                Resource: 
+                  - !Sub arn:${AWS::Partition}:lambda:us-east-1:${AWS::AccountId}:function:GeofencesSecHeadersLambda*
+                  - !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
+        - PolicyName: AllowDeletionLambdaEdge
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'iam:CreateServiceLinkedRole'
+                  - 'iam:PassRole'
+                  - 'iam:CreateRole'
+                  - 'iam:CreatePolicy'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'                  
+                  - 'iam:DeleteRole'
+                  - 'iam:DeletePolicy'
+                  - 'iam:DeleteServiceLinkedRole'
+                Resource: 
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/service-role/GeofencesSecHeadersLambdaRole*
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/GeofencesSecHeadersLambdaPolicy*
+                  - !Sub arn:${AWS::Partition}:lambda:us-east-1:${AWS::AccountId}:function:GeofencesSecHeadersLambda*
+
+  LambdaEdgeCustomResourceLambdaPolicy:
+    Type: 'AWS::IAM::Policy'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 'ssm:PutParameter'
+              - 'ssm:DeleteParameter'
+              - 'ssm:GetParameterHistory'
+              - 'ssm:GetParametersByPath'
+              - 'ssm:GetParameters'
+              - 'ssm:GetParameter'
+              - 'ssm:DeleteParameters'
+            Effect: Allow
+            Resource: !Sub arn:${AWS::Partition}:ssm:us-east-1:${AWS::AccountId}:parameter/geofences-region*
+        Version: '2012-10-17'
+      PolicyName: !Sub LambdaEdgeCustomResourceLambdaPolicy-${AWS::Region}-${AWS::AccountId}
+      Roles: 
+        - !Ref LambdaEdgeCustomResourceLambdaRole   
+
+  LambdaEdgeCustomResourceLambda:
+    Type: 'AWS::Lambda::Function'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Properties:
+      Code:
+        S3Bucket: !Ref SolutionsBucket
+        S3Key: !Sub ${SolutionsPrefix}lambda-custom-resource.zip
+      Handler: lambdaDeploy.handler
+      Role: !GetAtt 
+        - LambdaEdgeCustomResourceLambdaRole
+        - Arn
+      Runtime: python3.7
+      Timeout: 300
+    DependsOn:
+      - LambdaEdgeCustomResourceLambdaPolicy
+      - LambdaEdgeCustomResourceLambdaRole    
+    Metadata: 
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: using a policy that allows write permission to CloudWatch Logs.
+
+  LambdaEdgeCustomResource:
+    Type: 'AWS::CloudFormation::CustomResource'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Properties:
+      ServiceToken: !GetAtt 
+        - LambdaEdgeCustomResourceLambda
+        - Arn
+      Requests:
+        - awsRegion: !Ref 'AWS::Region'
+          lambdaName: !Sub 
+            - GeofencesSecHeadersLambda${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+          lambdaRoleName: !Sub 
+            - GeofencesSecHeadersLambdaRole${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+          lambdaPolicyName: !Sub 
+            - GeofencesSecHeadersLambdaPolicy${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+          ssmParamName: !Sub 
+            - geofences-region${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+          appSyncEndpoint: !Ref GeofenceApiUrl 
+
+Outputs:
+  LambdaEdgeCustomResourceArn:
+    Description: parameter passed to the website-stack.yaml
+    Value: !GetAtt LambdaEdgeCustomResource.lambdaArn

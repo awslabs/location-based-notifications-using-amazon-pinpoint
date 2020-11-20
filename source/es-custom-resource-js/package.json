@@ -1,0 +1,17 @@
+{
+  "name": "es-custom-resource",
+  "version": "1.0.0",
+  "description": "code for lambda function to make requests to ES",
+  "main": "es-requests.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "AWS Solution Builders",
+  "license": "MIT-0",
+  "dependencies": {
+    "aws-sdk": "^2.661.0",
+    "form-data": "^3.0.0",
+    "https": "^1.0.0",
+    "url": "^0.11.0"
+  }
+}

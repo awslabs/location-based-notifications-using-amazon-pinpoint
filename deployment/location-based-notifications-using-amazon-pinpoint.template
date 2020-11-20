@@ -1,0 +1,1951 @@
+###########################################################################################################################################
+#  Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved                                                                  #
+#                                                                                                                                          #
+#  Licensed under the MIT No Attribution License (MIT-0) (the ‘License’). You may not use this file except in compliance                   #
+#  with the License. A copy of the License is located at                                                                                   #
+#                                                                                                                                          #
+#      https://opensource.org/licenses/MIT-0                                                                                               #
+#                                                                                                                                          #
+#  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files        #
+#  (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,     #
+#  publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so.  #
+#  THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF      #
+#  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR #
+#  ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH  # 
+#  THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                                                                              #
+############################################################################################################################################
+
+# Location-based Notifications Using Amazon Pinpoint solution
+#
+# template for location-based-notifications-using-amazon-pinpoint
+# **DO NOT DELETE**
+#
+# author: 
+#   - Ciro Santos (cirosant@)
+#   - Paulo Aragão (paragao@)
+#   - aws-solutions-builder@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: "(SO0099a) - The AWS Cloudformation template for deploymnet of the Location-based Notifications Using Amazon Pinpoint solution"
+
+Mappings:
+  MetricsMap:
+    Send-Data:
+      SendAnonymousData: "Yes" # change to 'No' if needed
+  SourceCode:
+    General:
+      S3Bucket: "%%BUCKET_NAME%%"
+      KeyPrefix: "%%SOLUTION_NAME%%/%%VERSION%%" 
+
+Parameters: 
+  DeployELK:
+    Type: String
+    Default: 'True'
+    AllowedValues:
+      - 'True'
+      - 'False'
+  APNSCertificate:
+    Type: String
+  APNSPrivateKey:
+    Type: String 
+  GCMApiKey:
+    Type: String
+  HEREApiKey:
+    Type: String
+  AnonymousData:
+    Type: String
+    Default: "Yes"
+    AllowedValues: 
+      - "Yes"
+      - "No"
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - 
+        Label: 
+          default: "AWS Secrets Manager secret's names"
+        Parameters:
+          - APNSCertificate
+          - APNSPrivateKey
+          - GCMApiKey
+          - HEREApiKey
+      -  
+        Label:
+          default: "Analytics dashboard"
+        Parameters:
+          - DeployELK
+      - 
+        Label:
+          default: "Anonymous usage data (opt in)"
+        Parameters:
+          - AnonymousData
+    ParameterLabels:
+      APNSCertificate:
+        default: "Name of secret holding the APNS Certificate already created"
+      APNSPrivateKey:
+        default: "Name of secret holding the APNS Private Key already created"
+      GCMApiKey: 
+        default: "Name of secret holding the FCM API Key already created"
+      HEREApiKey:
+        default: "Name of secret holding the HERE API Key already created"
+      DeployELK:
+        default: "Deploy a managed Kibana solution to create dashboards?"
+      AnonymousData:
+        default: "Send Anonymous Usage Data?"
+
+Conditions:
+  CreateELK: !Equals [ !Ref DeployELK, 'True' ]
+
+Resources:
+  AdminSiteCustomStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://%%TEMPLATE_OUTPUT_BUCKET%%.s3.amazonaws.com/%%SOLUTION_NAME%%/%%VERSION%%/website-stack.template
+      Parameters:
+        SolutionsBucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        SolutionsPrefix: !Sub 
+          - ${Prefix}/
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+        S3LogBucket: !Ref S3LoggingBucket
+        LambdaEdgeArn: !GetAtt
+          - CustomResourcesStack
+          - Outputs.LambdaEdgeCustomResourceArn 
+        UserPoolId: !Ref GeofenceUserPool
+        IdentityPoolId: !Ref GeofenceIdentityPool
+        AppClientId: !Ref AppClient
+        PinpointAppId: !Ref GeofenceApplication
+        AppSyncEndpoint: !GetAtt 
+          - GeofenceApi
+          - GraphQLUrl
+    DependsOn: 
+      - CustomResourcesStack
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  CustomResourcesStack:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: https://%%TEMPLATE_OUTPUT_BUCKET%%.s3.amazonaws.com/%%SOLUTION_NAME%%/%%VERSION%%/custom-resources-stack.template
+      Parameters:
+        SolutionsBucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        SolutionsPrefix: !Sub 
+          - ${Prefix}/
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+        GeofenceApiUrl: !GetAtt 
+          - GeofenceApi 
+          - GraphQLUrl
+    DependsOn: 
+      - GeofenceApi
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ElasticSearchKibana:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateELK
+    DependsOn:
+      - CustomResourcesStack
+    Properties: 
+      TemplateURL: https://%%TEMPLATE_OUTPUT_BUCKET%%.s3.amazonaws.com/%%SOLUTION_NAME%%/%%VERSION%%/elasticsearchkibana.template
+      Parameters: 
+        SolutionsBucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        SolutionsPrefix: !Sub 
+          - ${Prefix}/
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+        ESUserPoolId: !Ref GeofenceUserPool
+        ESUserPoolArn: !GetAtt GeofenceUserPool.Arn
+        ESUserPoolProviderName: !GetAtt GeofenceUserPool.ProviderName
+        DDBEventSourceArn: !GetAtt 
+          - GeofencesTable
+          - StreamArn
+        DDBTable: !Ref GeofencesTable
+        DDBStreamsArn: !GetAtt 
+          - GeofencesTable
+          - StreamArn
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+
+  GeofencesTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      SSESpecification: 
+        SSEEnabled: true
+        SSEType: KMS 
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+    DeletionPolicy: Retain
+
+  GeofenceDynamoDBRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: DynamoDbStreamsExecutionPolicy
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:GetSharditerator'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:DescribeStream'
+                  - 'dynamodb:GetRecords'
+                  - 'dynamodb:ListStreams'
+                Resource: !Sub 
+                  - arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${GeoTable}
+                  - { GeoTable: !Ref GeofencesTable }
+        - PolicyName: DynamoDbCRUDPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'dynamodb:BatchGetItem'
+                  - 'dynamodb:BatchWriteItem'
+                  - 'dynamodb:ConditionCheckItem'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:DescribeTable'
+                  - 'dynamodb:DeleteItem'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:DescribeLimits'
+                Resource: !Sub 
+                  - arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${GeoTable}
+                  - { GeoTable: !Ref GeofencesTable }
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GetCurrentAddressLambdaServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*         
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GetCurrentAddressLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        S3Key: !Sub 
+          - ${Prefix}/getCurrentAddress.zip
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+      Handler: getCurrentAddress.handler
+      Role: !GetAtt 
+        - GetCurrentAddressLambdaServiceRole
+        - Arn
+      Runtime: python3.7
+      Environment:
+        Variables:
+          HERE_API_KEY: !Sub 
+            - '{{resolve:secretsmanager:${Certificate}:SecretString}}'
+            - { Certificate: !Ref HEREApiKey }
+    DependsOn:
+      - GetCurrentAddressLambdaServiceRole
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: using an inline policy that allows to write to CloudWatch Logs.
+
+  GeofenceLambdaCurrentAddressRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: 'lambda:invokeFunction'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - GetCurrentAddressLambda
+                  - Arn
+            Version: '2012-10-17'
+          PolicyName: AppsyncLambdaInvoke
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GetCoordinatesFromAddressLambdaServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GetCoordinatesFromAddressLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]] 
+        S3Key: !Sub 
+          - ${Prefix}/getCoordsFromAddress.zip
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+      Handler: getCoordsFromAddress.handler
+      Role: !GetAtt 
+        - GetCoordinatesFromAddressLambdaServiceRole
+        - Arn
+      Runtime: python3.7
+      Environment:
+        Variables:
+          HERE_API_KEY: !Sub 
+            - '{{resolve:secretsmanager:${Certificate}:SecretString}}'
+            - { Certificate: !Ref HEREApiKey }
+    DependsOn:
+      - GetCoordinatesFromAddressLambdaServiceRole
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: using an inline policy that allows to write to CloudWatch Logs.
+
+  GetCoordinatesFromAddressLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: 'lambda:invokeFunction'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - GetCoordinatesFromAddressLambda
+                  - Arn
+            Version: '2012-10-17'
+          PolicyName: AppsyncLambdaInvoke
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofenceIdentityPoolAuthRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+            Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+        Version: '2012-10-17'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofenceIdentityPoolUnauthRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': unauthenticated
+            Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+        Version: '2012-10-17'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofenceApplication:
+    Type: 'AWS::Pinpoint::App'
+    Properties:
+      Name: !Sub 
+        - geofences-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofencePinpointAuthPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 'mobiletargeting:PutEvents'
+              - 'mobiletargeting:UpdateEndpoint'
+              - 'mobiletargeting:GetUserEndpoints'
+            Effect: Allow
+            Resource: !Sub 
+              - arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${GeoApp}*
+              - { GeoApp: !Ref GeofenceApplication }
+        Version: '2012-10-17'
+      PolicyName: !Sub
+        - GeofencePinpointAuthPolicy-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      Roles:
+        - !Ref GeofenceIdentityPoolAuthRole
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofencePinpointUnauthPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 'mobiletargeting:PutEvents'
+              - 'mobiletargeting:UpdateEndpoint'
+              - 'mobiletargeting:GetUserEndpoints'
+            Effect: Allow
+            Resource: !Sub 
+              - arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${GeoApp}*
+              - { GeoApp: !Ref GeofenceApplication }
+        Version: '2012-10-17'
+      PolicyName: !Sub  
+        - GeofencePinpointUnauthPolicy-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      Roles:
+        - !Ref GeofenceIdentityPoolUnauthRole
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  S3LoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain    
+    Properties:
+      AccessControl: LogDeliveryWrite     
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BucketName: !Sub
+        - location-based-notifications-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }        
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: this is the logging bucket for all other buckets. Circular dependency.
+          - id: W51
+            reason: no need for a policy, using LogDeliveryWrite to deliver logs from other buckets and blocking public access.
+
+  GeofencePinpointEventBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      AccessControl: LogDeliveryWrite
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3LoggingBucket
+        LogFilePrefix: pinpoint-bucket-access-logs/
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256    
+      BucketName: !Sub
+        - geofence-pinpoint-events-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    DependsOn: 
+      - GeofenceApplicationAPNSChannel
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: already blocking public access, which restricts access to only the specific AWS account it exists.
+
+  GeofencePinpointEventBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref GeofencePinpointEventBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 's3:PutObject'
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Condition:
+              Bool: 
+                aws:SecureTransport: 
+                  - 'True'
+            Resource: !Join
+              - ''
+              - - !GetAtt GeofencePinpointEventBucket.Arn
+                - /*
+        Version: '2012-10-17'
+
+  GeofenceKinesisForPinpointS3Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref 'AWS::AccountId'
+            Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:                  
+                  - 'logs:PutLogEvents'                  
+                Effect: Allow
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:GeofenceFirehoseForPinpointStream-${AWS::Region}-${AWS::AccountId}:log-stream:S3Delivery'   
+              - Action:                  
+                  - 'kms:Decrypt'    
+                  - 'kms:GenerateDataKey'              
+                Effect: Allow
+                Resource: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/kinesis
+                Condition: 
+                  StringEquals:
+                    'kms:ViaService': !Sub s3.${AWS::Region}.amazonaws.com
+                  StringLike: 
+                    'kms:EncryptionContext:aws:s3:arn': !Sub 
+                      - arn:${AWS::Partition}:s3:::${GeoBucket}*
+                      - { GeoBucket: !Ref GeofencePinpointEventBucket }
+              - Action:
+                  - 's3:AbortMultipartUpload'
+                  - 's3:GetBucketLocation'
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                  - 's3:ListBucketMultipartUploads'
+                  - 's3:PutObject'
+                Effect: Allow
+                Resource: 
+                  - !Sub 
+                    - arn:${AWS::Partition}:s3:::${GeoBucket}
+                    - { GeoBucket: !Ref GeofencePinpointEventBucket }
+                  - !Sub 
+                    - arn:${AWS::Partition}:s3:::${GeoBucket}/*
+                    - { GeoBucket: !Ref GeofencePinpointEventBucket }
+              - Action:
+                  - 'kinesis:DescribeStream'
+                  - 'kinesis:GetShardIterator'
+                  - 'kinesis:GetRecords'
+                  - 'kinesis:ListShards'
+                Effect: Allow
+                Resource: !Sub 'arn:${AWS::Partition}:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/GeofenceFirehoseForPinpointStream-${AWS::Region}-${AWS::AccountId}'
+            Version: '2012-10-17'
+          PolicyName: FirehoseStreamToS3
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  FirehoseLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub location-based-notifications/deliverystream-${AWS::Region}
+
+  FirehoseLogStream:
+    Type: AWS::Logs::LogStream
+    Properties: 
+      LogGroupName: !Ref FirehoseLogGroup
+      LogStreamName: Firehose-S3Delivery
+
+  GeofenceFirehoseForPinpointStream:
+    Type: 'AWS::KinesisFirehose::DeliveryStream'
+    DependsOn: 
+      - GeofenceKinesisForPinpointS3Role
+    Properties:
+      DeliveryStreamName: !Sub location-based-notifications-${AWS::Region}
+      DeliveryStreamEncryptionConfigurationInput:
+        KeyType: AWS_OWNED_CMK
+      S3DestinationConfiguration:
+        BucketARN: !GetAtt GeofencePinpointEventBucket.Arn
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+        CompressionFormat: GZIP
+        CloudWatchLoggingOptions:
+          Enabled: True
+          LogGroupName: !Ref FirehoseLogGroup
+          LogStreamName: !Ref FirehoseLogStream
+        EncryptionConfiguration:
+          KMSEncryptionConfig:
+            AWSKMSKeyARN: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/s3
+        RoleARN: !GetAtt GeofenceKinesisForPinpointS3Role.Arn
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+  
+  GeofencePinpointToKinesisRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: pinpoint.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - 'firehose:PutRecordBatch'
+                  - 'firehose:DescribeDeliveryStream'
+                Effect: Allow
+                Resource: !GetAtt GeofenceFirehoseForPinpointStream.Arn
+            Version: '2012-10-17'
+          PolicyName: PinpointToKinesis
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+  
+  GeofenceApplicationEventStream:
+    Type: 'AWS::Pinpoint::EventStream'
+    Properties:
+      ApplicationId: !Ref GeofenceApplication
+      DestinationStreamArn: !GetAtt GeofenceFirehoseForPinpointStream.Arn
+      RoleArn: !GetAtt GeofencePinpointToKinesisRole.Arn
+
+  GeofenceApplicationAPNSChannel:
+    Type: 'AWS::Pinpoint::APNSChannel'
+    Properties:
+      ApplicationId: !Ref GeofenceApplication
+      Certificate: !Sub 
+        - '{{resolve:secretsmanager:${Certificate}:SecretString}}' 
+        - { Certificate: !Ref APNSCertificate }
+      DefaultAuthenticationMethod: CERTIFICATE
+      Enabled: true
+      PrivateKey: !Sub 
+        - '{{resolve:secretsmanager:${Certificate}:SecretString}}' 
+        - { Certificate: !Ref APNSPrivateKey }
+  
+  GeofenceApplicationGCMChannel:
+    Type: 'AWS::Pinpoint::GCMChannel'
+    Properties:
+      ApplicationId: !Ref GeofenceApplication
+      Enabled: true
+      ApiKey: !Sub 
+        - '{{resolve:secretsmanager:${Certificate}:SecretString}}' 
+        - { Certificate: !Ref GCMApiKey }
+  
+  SendMessageLambdaServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*
+  
+  SendMessageLambdaServiceRoleDefaultPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 'mobiletargeting:PutEvents'
+              - 'mobiletargeting:UpdateEndpoint'
+              - 'mobiletargeting:GetUserEndpoints'
+              - 'mobiletargeting:GetPushTemplate'
+              - 'mobiletargeting:ListTemplates'
+              - 'mobiletargeting:ListTemplateVersions'
+              - 'mobiletargeting:UpdateTemplateActiveVersion'
+              - 'mobiletargeting:GetEmailTemplate'
+              - 'mobiletargeting:CreatePushTemplate'
+              - 'mobiletargeting:UpdatePushTemplate'
+              - 'mobiletargeting:DeletePushTemplate'
+              - 'mobiletargeting:SendMessages'
+            Effect: Allow
+            Resource:
+              - !Sub 
+                - arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${GeoApp}/*
+                - { GeoApp: !Ref GeofenceApplication}
+              - !Sub arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:templates/*/*
+              - !Sub 
+                - arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${GeoApp}/messages
+                - { GeoApp: !Ref GeofenceApplication }
+          - Action:
+              - 'dynamodb:BatchGetItem'
+              - 'dynamodb:GetRecords'
+              - 'dynamodb:GetShardIterator'
+              - 'dynamodb:Query'
+              - 'dynamodb:GetItem'
+              - 'dynamodb:Scan'
+              - 'dynamodb:BatchWriteItem'
+              - 'dynamodb:PutItem'
+              - 'dynamodb:UpdateItem'
+              - 'dynamodb:DeleteItem'
+            Effect: Allow
+            Resource:
+              - !GetAtt 
+                - GeofencesTable
+                - Arn
+              - !Ref 'AWS::NoValue'
+        Version: '2012-10-17'
+      PolicyName: !Sub 
+        - SendMessageLambdaServiceRoleDefaultPolicy-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      Roles:
+        - !Ref SendMessageLambdaServiceRole
+  
+  SendMessageLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        S3Key: !Sub 
+          - ${Prefix}/sendMessage.zip
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+      Handler: sendMessage.handler
+      Role: !GetAtt 
+        - SendMessageLambdaServiceRole
+        - Arn
+      Runtime: python3.7
+      Environment:
+        Variables:
+          DBB_TABLE_NAME: !Ref GeofencesTable
+    DependsOn:
+      - SendMessageLambdaServiceRoleDefaultPolicy
+      - SendMessageLambdaServiceRole
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: using BasicExecutionRole which allows writing to CloudWatch Logs
+
+  GeofenceSendMessageLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: 'lambda:invokeFunction'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - SendMessageLambda
+                  - Arn
+            Version: '2012-10-17'
+          PolicyName: !Sub
+            - AppsyncLambdaInvoke-${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ManageMessagesLambdaServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*
+
+  ManageMessagesLambdaServiceRoleDefaultPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 'mobiletargeting:PutEvents'
+              - 'mobiletargeting:UpdateEndpoint'
+              - 'mobiletargeting:GetUserEndpoints'
+              - 'mobiletargeting:GetPushTemplate'
+              - 'mobiletargeting:ListTemplates'
+              - 'mobiletargeting:ListTemplateVersions'
+              - 'mobiletargeting:UpdateTemplateActiveVersion'
+              - 'mobiletargeting:GetEmailTemplate'
+              - 'mobiletargeting:CreatePushTemplate'
+              - 'mobiletargeting:UpdatePushTemplate'
+              - 'mobiletargeting:DeletePushTemplate'
+              - 'mobiletargeting:SendMessages'
+            Effect: Allow
+            Resource:
+              - !Sub arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:templates/*/*
+              - !Sub arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/*/messages
+        Version: '2012-10-17'
+      PolicyName: !Sub
+        - ManageMessagesLambdaServiceRoleDefaultPolicy-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      Roles:
+        - !Ref ManageMessagesLambdaServiceRole
+
+  ManageMessagesLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        S3Key: !Sub 
+          - ${Prefix}/manageMessages.zip
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+      Handler: manageMessages.handler
+      Role: !GetAtt 
+        - ManageMessagesLambdaServiceRole
+        - Arn
+      Runtime: python3.7
+    DependsOn:
+      - ManageMessagesLambdaServiceRoleDefaultPolicy
+      - ManageMessagesLambdaServiceRole
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: using an inline policy that allows to write to CloudWatch Logs.
+
+  GeofenceManageMessagesLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: 'lambda:invokeFunction'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - ManageMessagesLambda
+                  - Arn
+            Version: '2012-10-17'
+          PolicyName: !Sub
+            - AppsyncLambdaInvoke-${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofenceCognitoUserPoolClientPinpoint:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: cognito-idp.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: 'mobiletargeting:UpdateEndpoint'
+                Effect: Allow
+                Resource: !Sub 
+                  - arn:${AWS::Partition}:mobiletargeting:${AWS::Region}:${AWS::AccountId}:apps/${GeoApp}/endpoints/*
+                  - { GeoApp: !Ref GeofenceApplication }
+              - Action: 'mobileanalytics:PutItems'
+                Effect: Allow
+                Resource: !Sub arn:${AWS::Partition}:pinpoint:${AWS::Region}:${AWS::AccountId}:apps/*
+            Version: '2012-10-17'
+          PolicyName: !Sub 
+            - CognitoPinpointPutItemsPolicy-${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: unable to restrict which endpoint is allowed the action otherwise would restrict the functionality to pre-existing well known endpoints and would not allow for new additional endpoints to be enable in the solution.
+
+  PosConfirmationLambdaServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*
+
+  PosConfirmationLambdaServiceRoleDefaultPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: 'cognito-idp:AdminAddUserToGroup'
+            Effect: Allow
+            Resource: !Sub arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+        Version: '2012-10-17'
+      PolicyName: !Sub 
+        - PosConfirmationLambdaServiceRolePolicy-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      Roles:
+        - !Ref PosConfirmationLambdaServiceRole
+
+  PosConfirmationLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Join ["-", [!FindInMap ["SourceCode", "General", "S3Bucket"], Ref: "AWS::Region"]]
+        S3Key: !Sub 
+          - ${Prefix}/cognitoPosConfirmation.zip
+          - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
+      Handler: cognitoPosConfirmation.handler
+      Role: !GetAtt 
+        - PosConfirmationLambdaServiceRole
+        - Arn
+      Runtime: python3.7
+    DependsOn:
+      - PosConfirmationLambdaServiceRoleDefaultPolicy
+      - PosConfirmationLambdaServiceRole
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: using an inline policy that allows to write to CloudWatch Logs.
+
+  PosConfirmationLambdaPostConfirmationCognito:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt 
+        - PosConfirmationLambda
+        - Arn
+      Principal: cognito-idp.amazonaws.com
+
+  GeofenceUserPool:
+    Type: 'AWS::Cognito::UserPool'
+    Properties:
+      UserPoolAddOns:
+        AdvancedSecurityMode: ENFORCED
+      Policies:
+        PasswordPolicy: 
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 90    
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      AutoVerifiedAttributes:
+        - email
+      EmailVerificationMessage: 'Your verification code is {####}'
+      EmailVerificationSubject: 'Your verification code - Location-based-notifications-using-amazon-pipnpoint'
+      LambdaConfig:
+        PostConfirmation: !GetAtt 
+          - PosConfirmationLambda
+          - Arn
+      Schema:
+        - AttributeDataType: String
+          Name: userType
+          StringAttributeConstraints:
+            MaxLength: '15'
+            MinLength: '1'
+      DeviceConfiguration:
+        DeviceOnlyRememberedOnUserPrompt: True
+      UserPoolName: !Sub 
+        - GeofenceUserPool-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+        EmailMessage: 'Your verification code is {####}'
+        EmailSubject: 'Your verification code - Location-based-notifications-using-amazon-pinpoint'
+        SmsMessage: 'The verification code to your new account is {####}'
+
+  AppClient:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      UserPoolId: !Ref GeofenceUserPool
+      AnalyticsConfiguration:
+        ApplicationId: !Ref GeofenceApplication
+        ExternalId: external_id
+        RoleArn: !GetAtt 
+          - GeofenceCognitoUserPoolClientPinpoint
+          - Arn
+        UserDataShared: true
+      ClientName: !Sub
+        - GeofenceUserPoolClient-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      GenerateSecret: false
+
+  AppClientAdmin:
+    Type: 'AWS::Cognito::UserPoolClient'
+    Properties:
+      UserPoolId: !Ref GeofenceUserPool
+      AnalyticsConfiguration:
+        ApplicationId: !Ref GeofenceApplication
+        ExternalId: external_id
+        RoleArn: !GetAtt 
+          - GeofenceCognitoUserPoolClientPinpoint
+          - Arn
+        UserDataShared: true
+      ClientName: !Sub 
+        - GeofenceUserPoolClientAdmin-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      GenerateSecret: false
+
+  GeofenceUserPoolGroupAdmin:
+    Type: 'AWS::Cognito::UserPoolGroup'
+    Properties:
+      UserPoolId: !Ref GeofenceUserPool
+      GroupName: 'geofence-admin'
+
+  GeofenceUserPoolGroupMobile:
+    Type: 'AWS::Cognito::UserPoolGroup'
+    Properties:
+      UserPoolId: !Ref GeofenceUserPool
+      GroupName: 'geofence-mobile'
+
+  GeofenceIdentityPool:
+    Type: 'AWS::Cognito::IdentityPool'
+    Properties:
+      AllowUnauthenticatedIdentities: true
+      CognitoIdentityProviders:
+        - ClientId: !Ref AppClient
+          ProviderName: !GetAtt 
+            - GeofenceUserPool
+            - ProviderName
+        - ClientId: !Ref AppClientAdmin
+          ProviderName: !GetAtt 
+            - GeofenceUserPool
+            - ProviderName
+      IdentityPoolName: !Sub 
+        - GeofenceIdentityPool-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W57
+            reason: proper IAM rules are being established for unauthenticated users.
+
+  GeofenceIdentityPoolRoleAttachment:
+    Type: 'AWS::Cognito::IdentityPoolRoleAttachment'
+    Properties:
+      IdentityPoolId: !Ref GeofenceIdentityPool
+      Roles:
+        authenticated: !GetAtt 
+          - GeofenceIdentityPoolAuthRole
+          - Arn
+        unauthenticated: !GetAtt 
+          - GeofenceIdentityPoolUnauthRole
+          - Arn
+    DependsOn:
+      - GeofenceIdentityPool
+
+  AppSyncToCWLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument: 
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogGroup'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action: 
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:*:*             
+            Version: '2012-10-17'
+          PolicyName: !Sub AppSyncPublishLogs-${AWS::Region}        
+
+  GeofenceApi:
+    Type: 'AWS::AppSync::GraphQLApi'
+    Properties:
+      XrayEnabled: True
+      LogConfig:
+        CloudWatchLogsRoleArn: !GetAtt AppSyncToCWLogsRole.Arn
+        FieldLogLevel: ERROR 
+      AuthenticationType: AMAZON_COGNITO_USER_POOLS
+      Name: !Sub 
+        - geofence-api-${Hash}
+        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+      UserPoolConfig:
+        AwsRegion: !Ref 'AWS::Region'
+        DefaultAction: DENY
+        UserPoolId: !Ref GeofenceUserPool
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Delete
+
+  GeofencesApiKey:
+    Type: 'AWS::AppSync::ApiKey'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+
+  GeofencesSchema:
+    Type: 'AWS::AppSync::GraphQLSchema'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      Definition: |-
+        type Geofence {
+            id: ID!
+            name: String
+            branch: String
+            address: String
+            city: String
+            country: String
+            region: String
+            latitude: Float
+            longitude: Float
+            definition: String
+            visits: Int
+        }
+        input CreateGeofenceInput {
+            id: ID
+            name: String
+            branch: String
+            address: String
+            city: String
+            country: String
+            region: String
+            latitude: Float
+            longitude: Float
+            definition: String
+            visits: Int
+        }
+        input UpdateGeofenceInput {
+            id: ID!
+            name: String
+            branch: String
+            address: String
+            city: String
+            country: String
+            region: String
+            latitude: Float
+            longitude: Float
+            definition: String
+            visits: Int
+        }
+        input DeleteGeofenceInput {
+            id: ID
+        }
+        input ModelIDFilterInput {
+            ne: ID
+            eq: ID
+            le: ID
+            lt: ID
+            ge: ID
+            gt: ID
+            contains: ID
+            notContains: ID
+            between: [ID]
+            beginsWith: ID
+        }
+        input ModelStringFilterInput {
+            ne: String
+            eq: String
+            le: String
+            lt: String
+            ge: String
+            gt: String
+            contains: String
+            notContains: String
+            between: [String]
+            beginsWith: String
+        }
+        input ModelFloatFilterInput {
+            ne: Float
+            eq: Float
+            le: Float
+            lt: Float
+            ge: Float
+            gt: Float
+            contains: Float
+            notContains: Float
+            between: [Float]
+        }
+        input ModelIntFilterInput {
+            ne: Int
+            eq: Int
+            le: Int
+            lt: Int
+            ge: Int
+            gt: Int
+            contains: Int
+            notContains: Int
+            between: [Int]
+        }
+        input ModelBooleanFilterInput {
+            ne: Boolean
+            eq: Boolean
+        }
+        enum ModelSortDirection {
+            ASC
+            DESC
+        }
+        input ModelGeofenceFilterInput {
+            id: ModelIDFilterInput
+            name: ModelStringFilterInput
+            branch: ModelStringFilterInput
+            address: ModelStringFilterInput
+            city: ModelStringFilterInput
+            country: ModelStringFilterInput
+            region: ModelStringFilterInput
+            latitude: ModelFloatFilterInput
+            longitude: ModelFloatFilterInput
+            visits: ModelIntFilterInput
+            definition: ModelStringFilterInput
+            and: [ModelGeofenceFilterInput]
+            or: [ModelGeofenceFilterInput]
+            not: ModelGeofenceFilterInput
+        }
+        type ModelGeofenceConnection {
+            items: [Geofence]
+            nextToken: String
+        }
+        type Address {    
+            street: String
+            city: String
+            state: String
+            country: String
+            latitude: Float
+            longitude: Float
+        }
+        input CoordinatesInput {
+            latitude: Float
+            longitude: Float
+        }
+        type MessageReceipt {
+          status: String
+          endpointId: String
+          message: String
+        }
+        input MessageInput {
+          applicationId: String!
+          geofenceId: String!
+          userId: String!
+        }
+        input GeofenceMessageInput {
+          service: String!
+          action: String!
+          title: String!
+          body: String!
+        }
+        type GeofenceMessage {
+          service: String!
+          action: String!
+          title: String!
+          body: String!
+        }
+        type GeofenceMessageReceipt {
+          status: String
+          message: GeofenceMessage
+        }
+        type GeofenceMessageStatus {
+          status: String
+          message: String
+        }
+        type Mutation {
+            createGeofence(input: CreateGeofenceInput!): Geofence
+                @aws_auth(cognito_groups: ["geofence-admin"])
+            updateGeofence(input: UpdateGeofenceInput!): Geofence
+                @aws_auth(cognito_groups: ["geofence-admin"])
+            deleteGeofence(input: DeleteGeofenceInput!): Geofence
+                @aws_auth(cognito_groups: ["geofence-admin"])
+            sendMessage(input: MessageInput!): MessageReceipt
+                @aws_auth(cognito_groups: ["geofence-admin", "geofence-mobile"])
+            createGeofenceMessage(template: String!, input: GeofenceMessageInput!): GeofenceMessageStatus
+                @aws_auth(cognito_groups: ["geofence-admin"])
+            deleteGeofenceMessage(template: String!): GeofenceMessageStatus
+                @aws_auth(cognito_groups: ["geofence-admin"])
+        }
+        type Query {
+            getGeofence(id: ID!): Geofence
+                @aws_auth(cognito_groups: ["geofence-admin", "geofence-mobile"])
+            listGeofences(filter: ModelGeofenceFilterInput, limit: Int, nextToken: String): ModelGeofenceConnection
+                @aws_auth(cognito_groups: ["geofence-admin", "geofence-mobile"])
+            getCurrentAddress(coordinates: CoordinatesInput!): Address
+                @aws_auth(cognito_groups: ["geofence-admin", "geofence-mobile"])
+            getCoordsFromAddress(address: String!): Address
+                @aws_auth(cognito_groups: ["geofence-admin"])
+            getGeofenceMessage(template: String!): GeofenceMessageReceipt
+                @aws_auth(cognito_groups: ["geofence-admin"])
+        }
+        type Subscription {
+            onCreateGeofence: Geofence
+                @aws_subscribe(mutations: ["createGeofence"])
+            onUpdateGeofence: Geofence
+                @aws_subscribe(mutations: ["updateGeofence"])
+            onDeleteGeofence: Geofence
+                @aws_subscribe(mutations: ["deleteGeofence"])
+        }
+
+  GeofencesDynamoDBDataSource:
+    Type: 'AWS::AppSync::DataSource'
+    DependsOn: 
+      - GeofencesSchema
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      Name: GeofencesDynamoDBDataSource
+      Type: AMAZON_DYNAMODB
+      DynamoDBConfig:
+        AwsRegion: !Ref 'AWS::Region'
+        TableName: !Ref GeofencesTable
+      ServiceRoleArn: !GetAtt 
+        - GeofenceDynamoDBRole
+        - Arn
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofencesLambdaGetCurrentAddressDataSource:
+    Type: 'AWS::AppSync::DataSource'
+    DependsOn: 
+      - GeofencesSchema
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      Name: GeofencesLambdaGetCurrentAddressDataSource
+      Type: AWS_LAMBDA
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt 
+          - GetCurrentAddressLambda
+          - Arn
+      ServiceRoleArn: !GetAtt 
+        - GeofenceLambdaCurrentAddressRole
+        - Arn
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofencesLambdaGetCoordsFromAddressDataSource:
+    Type: 'AWS::AppSync::DataSource'
+    DependsOn: 
+      - GeofencesSchema
+      - GetCoordinatesFromAddressLambda
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      Name: GeofencesLambdaGetCoordsFromAddressDataSource
+      Type: AWS_LAMBDA
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt 
+          - GetCoordinatesFromAddressLambda
+          - Arn
+      ServiceRoleArn: !GetAtt 
+        - GetCoordinatesFromAddressLambdaRole
+        - Arn
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofencesLambdaSendMessageDataSource:
+    Type: 'AWS::AppSync::DataSource'
+    DependsOn: 
+      - GeofencesSchema
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      Name: GeofencesLambdaSendMessageDataSource
+      Type: AWS_LAMBDA
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt 
+          - SendMessageLambda
+          - Arn
+      ServiceRoleArn: !GetAtt 
+        - GeofenceSendMessageLambdaRole
+        - Arn
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofencesLambdaManageMessagesDataSource:
+    Type: 'AWS::AppSync::DataSource'
+    DependsOn:
+      - GeofencesSchema
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      Name: GeofencesLambdaManageMessagesDataSource
+      Type: AWS_LAMBDA
+      LambdaConfig:
+        LambdaFunctionArn: !GetAtt 
+          - ManageMessagesLambda
+          - Arn
+      ServiceRoleArn: !GetAtt 
+        - GeofenceManageMessagesLambdaRole
+        - Arn
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverMutationCreateGeofences:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: createGeofence
+      TypeName: Mutation
+      DataSourceName: GeofencesDynamoDBDataSource
+      RequestMappingTemplate: |-
+        ## [Start] Prepare DynamoDB PutItem Request. **
+        $util.qr($context.args.input.put("createdAt", $util.time.nowISO8601()))
+        $util.qr($context.args.input.put("updatedAt", $util.time.nowISO8601()))
+        $util.qr($context.args.input.put("__typename", "Geofence"))
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+              "id":     $util.dynamodb.toDynamoDBJson($util.defaultIfNullOrBlank($ctx.args.input.id, $util.autoId()))
+          },
+          "attributeValues": $util.dynamodb.toMapValuesJson($context.args.input),
+          "condition": {
+              "expression": "attribute_not_exists(#id)",
+              "expressionNames": {
+                  "#id": "id"
+            }
+          }
+        }
+        ## [End] Prepare DynamoDB PutItem Request. **
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesDynamoDBDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverMutationUpdateGeofences:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: updateGeofence
+      TypeName: Mutation
+      DataSourceName: GeofencesDynamoDBDataSource
+      RequestMappingTemplate: >-
+        #if( $authCondition && $authCondition.expression != "" )
+          #set( $condition = $authCondition )
+          $util.qr($condition.put("expression", "$condition.expression AND attribute_exists(#id)"))
+          $util.qr($condition.expressionNames.put("#id", "id"))
+        #else
+          #set( $condition = {
+          "expression": "attribute_exists(#id)",
+          "expressionNames": {
+              "#id": "id"
+          },
+          "expressionValues": {}
+        } )
+
+        #end
+
+        ## Automatically set the updatedAt timestamp. **
+
+        $util.qr($context.args.input.put("updatedAt", $util.time.nowISO8601()))
+
+        $util.qr($context.args.input.put("__typename", "Geofence"))
+
+        ## Update condition if type is @versioned **
+
+        #if( $versionedCondition )
+          $util.qr($condition.put("expression", "($condition.expression) AND $versionedCondition.expression"))
+          $util.qr($condition.expressionNames.putAll($versionedCondition.expressionNames))
+          $util.qr($condition.expressionValues.putAll($versionedCondition.expressionValues))
+        #end
+
+        #set( $expNames = {} )
+
+        #set( $expValues = {} )
+
+        #set( $expSet = {} )
+
+        #set( $expAdd = {} )
+
+        #set( $expRemove = [] )
+
+        #foreach( $entry in $util.map.copyAndRemoveAllKeys($context.args.input,
+        ["id"]).entrySet() )
+          #if( $util.isNull($entry.value) )
+            #set( $discard = $expRemove.add("#$entry.key") )
+            $util.qr($expNames.put("#$entry.key", "$entry.key"))
+          #else
+            $util.qr($expSet.put("#$entry.key", ":$entry.key"))
+            $util.qr($expNames.put("#$entry.key", "$entry.key"))
+            $util.qr($expValues.put(":$entry.key", $util.dynamodb.toDynamoDB($entry.value)))
+          #end
+        #end
+
+        #set( $expression = "" )
+
+        #if( !$expSet.isEmpty() )
+          #set( $expression = "SET" )
+          #foreach( $entry in $expSet.entrySet() )
+            #set( $expression = "$expression $entry.key = $entry.value" )
+            #if( $foreach.hasNext() )
+              #set( $expression = "$expression," )
+            #end
+          #end
+        #end
+
+        #if( !$expAdd.isEmpty() )
+          #set( $expression = "$expression ADD" )
+          #foreach( $entry in $expAdd.entrySet() )
+            #set( $expression = "$expression $entry.key $entry.value" )
+            #if( $foreach.hasNext() )
+              #set( $expression = "$expression," )
+            #end
+          #end
+        #end
+
+        #if( !$expRemove.isEmpty() )
+          #set( $expression = "$expression REMOVE" )
+          #foreach( $entry in $expRemove )
+            #set( $expression = "$expression $entry" )
+            #if( $foreach.hasNext() )
+              #set( $expression = "$expression," )
+            #end
+          #end
+        #end
+
+        #set( $update = {} )
+
+        $util.qr($update.put("expression", "$expression"))
+
+        #if( !$expNames.isEmpty() )
+          $util.qr($update.put("expressionNames", $expNames))
+        #end
+
+        #if( !$expValues.isEmpty() )
+          $util.qr($update.put("expressionValues", $expValues))
+        #end
+
+        {
+          "version": "2017-02-28",
+          "operation": "UpdateItem",
+          "key": {
+              "id": {
+                  "S": "$context.args.input.id"
+            }
+          },
+          "update": $util.toJson($update),
+          "condition": $util.toJson($condition)
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesDynamoDBDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverMutationDeleteGeofences:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: deleteGeofence
+      TypeName: Mutation
+      DataSourceName: GeofencesDynamoDBDataSource
+      RequestMappingTemplate: |-
+        #if( $authCondition )
+          #set( $condition = $authCondition )
+          $util.qr($condition.put("expression", "$condition.expression AND attribute_exists(#id)"))
+          $util.qr($condition.expressionNames.put("#id", "id"))
+        #else
+          #set( $condition = {
+          "expression": "attribute_exists(#id)",
+          "expressionNames": {
+              "#id": "id"
+          }
+        } )
+        #end
+        #if( $versionedCondition )
+          $util.qr($condition.put("expression", "($condition.expression) AND $versionedCondition.expression"))
+          $util.qr($condition.expressionNames.putAll($versionedCondition.expressionNames))
+          #set( $expressionValues = $util.defaultIfNull($condition.expressionValues, {}) )
+          $util.qr($expressionValues.putAll($versionedCondition.expressionValues))
+          #set( $condition.expressionValues = $expressionValues )
+        #end
+        {
+          "version": "2017-02-28",
+          "operation": "DeleteItem",
+          "key": {
+              "id": $util.dynamodb.toDynamoDBJson($ctx.args.input.id)
+          },
+          "condition": $util.toJson($condition)
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesDynamoDBDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverLambdaSendMessage:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: sendMessage
+      TypeName: Mutation
+      DataSourceName: GeofencesLambdaSendMessageDataSource
+      RequestMappingTemplate: |-
+        {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": {
+                "arguments":  $utils.toJson($context.arguments)
+            }
+        }
+      ResponseMappingTemplate: $utils.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesLambdaSendMessageDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverLambdaCreateGeofenceMessage:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: createGeofenceMessage
+      TypeName: Mutation
+      DataSourceName: GeofencesLambdaManageMessagesDataSource
+      RequestMappingTemplate: |-
+        {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": {
+                "operation": "createMessage",
+                "arguments":  $utils.toJson($context.arguments)
+            }
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesLambdaManageMessagesDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverLambdaDeleteGeofenceMessage:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: deleteGeofenceMessage
+      TypeName: Mutation
+      DataSourceName: GeofencesLambdaManageMessagesDataSource
+      RequestMappingTemplate: |-
+        {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": {
+                "operation": "deleteMessage",
+                "arguments":  $utils.toJson($context.arguments)
+            }
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesLambdaManageMessagesDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverQueryAllGeofences:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: listGeofences
+      TypeName: Query
+      DataSourceName: GeofencesDynamoDBDataSource
+      RequestMappingTemplate: |-
+        #set( $limit = $util.defaultIfNull($context.args.limit, 10) )
+        {
+          "version": "2017-02-28",
+          "operation": "Scan",
+          "filter":   #if( $context.args.filter )
+        $util.transform.toDynamoDBFilterExpression($ctx.args.filter)
+          #else
+        null
+          #end,
+          "limit": $limit,
+          "nextToken":   #if( $context.args.nextToken )
+        "$context.args.nextToken"
+          #else
+        null
+          #end
+        }
+      ResponseMappingTemplate: $util.toJson($ctx.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesDynamoDBDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverQueryGetGeofence:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: getGeofence
+      TypeName: Query
+      DataSourceName: GeofencesDynamoDBDataSource
+      RequestMappingTemplate: |-
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+              "id": $util.dynamodb.toDynamoDBJson($ctx.args.id)
+          }
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesDynamoDBDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverLambdaCurrentAddress:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: getCurrentAddress
+      TypeName: Query
+      DataSourceName: GeofencesLambdaGetCurrentAddressDataSource
+      RequestMappingTemplate: |-
+        {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": {
+                "arguments":  $utils.toJson($context.arguments)
+            }
+        }
+      ResponseMappingTemplate: $utils.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesLambdaGetCurrentAddressDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  ResolverLambdaGetCoordsFromAddress:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: getCoordsFromAddress
+      TypeName: Query
+      DataSourceName: GeofencesLambdaGetCoordsFromAddressDataSource
+      RequestMappingTemplate: |-
+        {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": {
+                "arguments":  $utils.toJson($context.arguments)
+            }
+        }
+      ResponseMappingTemplate: $utils.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesLambdaGetCoordsFromAddressDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+  
+  ResolverLambdaGetGeofenceMessage:
+    Type: 'AWS::AppSync::Resolver'
+    Properties:
+      ApiId: !GetAtt 
+        - GeofenceApi
+        - ApiId
+      FieldName: getGeofenceMessage
+      TypeName: Query
+      DataSourceName: GeofencesLambdaManageMessagesDataSource
+      RequestMappingTemplate: |-
+        {
+            "version": "2017-02-28",
+            "operation": "Invoke",
+            "payload": {
+                "operation": "getMessage",
+                "arguments":  $utils.toJson($context.arguments)
+            }
+        }
+      ResponseMappingTemplate: $util.toJson($context.result)
+    DependsOn:
+      - GeofencesSchema
+      - GeofencesLambdaManageMessagesDataSource
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+  GeofenceSampleRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action: 'dynamodb:Get*'
+                Effect: Allow
+                Resource: !Sub 
+                  - arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${GeoTable}
+                  - { GeoTable: !Ref GeofencesTable }
+            Version: '2012-10-17'
+          PolicyName: !Sub 
+            - AppsyncSample-${Hash}
+            - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+
+Outputs:
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref GeofenceUserPool      
+  CognitoUserPoolClientIdMobile:
+    Description: Cognito User Pool AppClient ID to be used by the mobile application
+    Value: !Ref AppClient   
+  CognitoCognitoIdentityPoolId:
+    Description: Cognito Identity Pool ID
+    Value: !Ref GeofenceIdentityPool
+  PinpointAppId:
+    Description: Pinpoint Application ID
+    Value: !Ref GeofenceApplication    
+  AppSyncApiEndpoint:
+    Description: URL for the AWS Appsync GrapQL API endpoint
+    Value: !GetAtt 
+      - GeofenceApi
+      - GraphQLUrl

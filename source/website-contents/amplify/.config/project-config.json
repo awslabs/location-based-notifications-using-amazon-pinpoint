@@ -1,0 +1,17 @@
+{
+    "projectName": "GeofenceAdminWebsite",
+    "version": "3.0",
+    "frontend": "javascript",
+    "javascript": {
+        "framework": "react",
+        "config": {
+            "SourceDir": "app",
+            "DistributionDir": "public",
+            "BuildCommand": "npm run build",
+            "StartCommand": "npm start"
+        }
+    },
+    "providers": [
+        "awscloudformation"
+    ]
+}
