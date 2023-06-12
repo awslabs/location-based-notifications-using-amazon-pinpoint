@@ -107,7 +107,7 @@ Resources:
         SolutionsPrefix: !Sub 
           - ${Prefix}/
           - { Prefix: !FindInMap [SourceCode, General, KeyPrefix] }
-        S3LogBucket: !Ref S3LoggingBucket
+        #S3LogBucket: !Ref S3LoggingBucket
         LambdaEdgeArn: !GetAtt
           - CustomResourcesStack
           - Outputs.LambdaEdgeCustomResourceArn 
@@ -476,34 +476,34 @@ Resources:
     UpdateReplacePolicy: Delete
     DeletionPolicy: Delete
 
-  S3LoggingBucket:
-    Type: 'AWS::S3::Bucket'
-    UpdateReplacePolicy: Retain
-    DeletionPolicy: Retain    
-    Properties:
-      AccessControl: LogDeliveryWrite     
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      BucketName: !Sub
-        - location-based-notifications-${Hash}
-        - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }        
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: W35
-            reason: this is the logging bucket for all other buckets. Circular dependency.
-          - id: W51
-            reason: no need for a policy, using LogDeliveryWrite to deliver logs from other buckets and blocking public access.
+  #S3LoggingBucket:
+  #  Type: 'AWS::S3::Bucket'
+  #  UpdateReplacePolicy: Retain
+  #  DeletionPolicy: Retain    
+  #  Properties:
+  #    AccessControl: LogDeliveryWrite     
+  #    BucketEncryption:
+  #      ServerSideEncryptionConfiguration:
+  #        - ServerSideEncryptionByDefault:
+  #            SSEAlgorithm: AES256
+  #    BucketName: !Sub
+  #      - location-based-notifications-${Hash}
+  #      - { Hash: !Select [4, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]] }        
+  #  Metadata:
+  #    cfn_nag:
+  #      rules_to_suppress:
+  #        - id: W35
+  #          reason: this is the logging bucket for all other buckets. Circular dependency.
+  #        - id: W51
+  #          reason: no need for a policy, using LogDeliveryWrite to deliver logs from other buckets and blocking public access.
 
   GeofencePinpointEventBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
       AccessControl: LogDeliveryWrite
-      LoggingConfiguration:
-        DestinationBucketName: !Ref S3LoggingBucket
-        LogFilePrefix: pinpoint-bucket-access-logs/
+      #LoggingConfiguration:
+      #  DestinationBucketName: !Ref S3LoggingBucket
+      #  LogFilePrefix: pinpoint-bucket-access-logs/
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
