@@ -94,6 +94,7 @@ _Note:_ You would have to create an S3 bucket with the prefix 'my-bucket-name-<a
 
 * Now build the distributable:
 ```
+cd deployment/
 chmod +x ./build-s3-dist.sh \n
 ./build-s3-dist.sh $DIST_OUTPUT_BUCKET $SOLUTION_NAME $VERSION \n
 ```
@@ -101,11 +102,34 @@ chmod +x ./build-s3-dist.sh \n
 * Deploy the distributable to an Amazon S3 bucket in your account. _Note:_ you must have the AWS Command Line Interface installed.
 
 ```
-aws s3 cp ./dist/ s3://my-bucket-name-<aws_region>/$SOLUTION_NAME/$VERSION/ --recursive --acl bucket-owner-full-control --profile aws-cred-profile-name \n
+aws s3 cp ./deployment/ s3://my-bucket-name-<aws_region>/$SOLUTION_NAME/$VERSION/ --recursive --acl bucket-owner-full-control --profile aws-cred-profile-name \n
 ```
 
-* Get the link of the solution template uploaded to your Amazon S3 bucket.
+### 4. Creating the required parameters
+
+* There are some parameters that should be created before you can deploy the solution. Make sure you navigate to the AWS Console within the region you want to deploy the solution and follow the steps below. 
+
+* On the AWS Console, navigate to the AWS Secrets Manager console and create the following parameters:
+ - APNS Certificate
+ - APNS Private Key
+ - FCM API Key
+ - HERE API Key
+
+* In order to generate some of those keys you will have to access the services on the Apple Notification Service (APNS) website, the Firebase Cloud Messaging (FCM) and the HERE geocoding solution. Please refer to each website to find the proper instructions on how to do so.
+
+* To create the parameters, go to AWS SSM Parameter Store and follow the procedure below for each secret mentioned above. Even though Secrets Manager supports multiple keys inside the same secret, this solution uses a single key per secret:
+ - Click on `Store a new secret`
+ - Choose `Other type of secret`
+ - On the Key box name it however you choose and paste the correct value on the Value box. 
+ - Click on `Next` and name your secret properly. Remember that name because you are going to need it to deploy the solution.
+ - Click on `Next` and leave all the defaults on the rotation page.
+ - Click on `Next` and review the parameters of your secret and click on `Store` when you are finished.
+
+### 5. Deploy the Cloudformation template
+
+* Get the link of the solution template uploaded to your Amazon S3 bucket. It should be located inside your bucket under the name `$SOLUTION_NAME/$VERSION/location-based-notifications-using-amazon-pinpoint.template`. 
 * Deploy the solution to your account by launching a new AWS CloudFormation stack using the link of the solution template in Amazon S3.
+
 
 ***
 
