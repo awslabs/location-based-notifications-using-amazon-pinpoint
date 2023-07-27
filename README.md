@@ -1,3 +1,5 @@
+*Deprecation Notice*: This AWS Solution has been archived and is no longer maintained by AWS. To discover other solutions, please visit the [AWS Solutions Library](https://aws.amazon.com/solutions/).
+
 # location-based-notifications-using-amazon-pinpoint
 
 The Location-Based Notifications Using Amazon Pinpoint solution allows you to engage with your customers based on their location. You can use the solution to create and manage geographic boundaries (geofences) around any businesses or points of interest. These geofences help you customize your engagement campaigns by sending push notifications to your customers when they enter or exit a geofence. For example, you can send a notification when a customer is walking to meet their rideshare, or when they enter an airport to check-in for a flight.
